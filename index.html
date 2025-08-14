@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Remarkable Woman — Rahul</title>
+  <script src="https://cdn.jsdelivr.net/npm/motion@10.16.2/dist/motion.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    :root {
+      --bg: #ffeed4;
+      --panel: #272b1e;
+      --ink: #ffffff;
+      --muted: #9bb0b7;
+      --accentA: #fff;
+      --accentB: #955606;
+    }
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: 'Segoe UI', sans-serif;
+    }
+
+    .player {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      width: 100%;
+    }
+    @media (min-width: 900px) {
+      .player { flex-direction: row; }
+      .cover  { flex: 0 0 35%; }
+      .panel  { flex: 0 0 65%; }
+    }
+
+    .cover {
+      flex: 1;
+      min-height: 40vh;
+      background: url('cover.png') center/cover no-repeat, #123038;
+    }
+
+    .panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      padding: clamp(16px, 4vw, 36px);
+      background: var(--panel);
+      gap: clamp(12px, 2vw, 24px);
+    }
+
+    /* Lyrics container */
+    .lyrics {
+      flex: 1;
+      max-height: 60vh;
+      overflow-y: auto;
+      padding-right: 8px;
+    }
+    .line {
+      margin-bottom: 0.6em;
+      font-size: clamp(1rem, 2.8vw, 1.6rem);
+      line-height: 1.4;
+    }
+
+    /* Push these down */
+    .bottom {
+      margin-top: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .meta .title {
+      font-weight: 700;
+      font-size: clamp(1.05rem, 2vw, 1.6rem);
+    }
+    .meta .artist {
+      color: var(--muted);
+      font-size: clamp(0.9rem, 1.5vw, 1rem);
+    }
+
+    .controls { display: flex; flex-direction: column; gap: 12px; }
+    .progress-row {
+      display: flex; align-items: center; gap: 10px;
+    }
+    .time {
+      width: 44px; text-align: center;
+      color: var(--muted); font-size: 0.85rem;
+    }
+    .progress {
+      flex: 1;
+      -webkit-appearance: none;
+      height: 4px;
+      border-radius: 2px;
+      cursor: pointer;
+      background: linear-gradient(90deg, var(--accentA) 0%, var(--accentB) 100%);
+    }
+    .progress::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      background: var(--ink);
+      box-shadow: 0 0 0 4px rgba(255,255,255,0.15);
+    }
+    .progress::-moz-range-thumb {
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      background: var(--ink);
+      box-shadow: 0 0 0 4px rgba(255,255,255,0.15);
+    }
+
+    .play {
+      align-self: center;
+      width: 64px; height: 64px;
+      border: none; border-radius: 50%;
+      background: var(--ink); color: var(--panel);
+      font-size: 1.25rem; cursor: pointer;
+      display: grid; place-items: center;
+      box-shadow: 0 12px 30px rgba(0,0,0,0.25);
+      transition: transform 120ms ease, box-shadow 120ms ease;
+    }
+    .play:active {
+      transform: scale(0.97);
+      box-shadow: 0 8px 22px rgba(0,0,0,0.22);
+    }
+  </style>
+</head>
+<body>
+
+  <div class="player">
+    <div class="cover" aria-label="Cover art"></div>
+
+    <div class="panel">
+      <div id="lyricsContainer" class="lyrics" aria-live="polite"></div>
+
+      <div class="bottom">
+        <div class="controls">
+          <div class="progress-row">
+            <div id="currentTime" class="time">0:00</div>
+            <input id="progress" class="progress" type="range"
+                   min="0" max="100" step="0.1" value="0"
+                   aria-label="Seek" />
+            <div id="duration" class="time">0:00</div>
+          </div>
+          <button id="playPause" class="play" aria-label="Play">▶</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <audio id="audio" preload="metadata">
+    <source src="song.mp3" type="audio/mpeg" />
+    <track id="vttTrack" kind="subtitles" srclang="en" src="lyrics.vtt" default />
+  </audio>
+
+  <script>
+    const audio       = document.getElementById('audio');
+    const playBtn     = document.getElementById('playPause');
+    const progress    = document.getElementById('progress');
+    const currentTime = document.getElementById('currentTime');
+    const durationEl  = document.getElementById('duration');
+    const lyricsEl    = document.getElementById('lyricsContainer');
+    const vttTrack    = document.getElementById('vttTrack');
+
+    let cues = [];
+    let lastIndex = -1;
+    let typingTimer;
+    let userScrubbing = false;
+
+    audio.addEventListener('loadedmetadata', () => {
+      durationEl.textContent = formatTime(audio.duration);
+    });
+
+    vttTrack.addEventListener('load', () => {
+      const tt = audio.textTracks[0];
+      tt.mode = 'hidden';
+      cues = Array.from(tt.cues);
+      tt.oncuechange = () => {
+        const cue = tt.activeCues[0];
+        if (cue) appendCue(cue);
+      };
+    });
+
+    playBtn.addEventListener('click', async () => {
+      if (audio.paused) {
+        await audio.play();
+        playBtn.textContent = '⏸';
+      } else {
+        audio.pause();
+        playBtn.textContent = '▶';
+      }
+    });
+
+    audio.addEventListener('timeupdate', () => {
+      if (!userScrubbing && audio.duration) {
+        const pct = (audio.currentTime / audio.duration) * 100;
+        progress.value = pct;
+        currentTime.textContent = formatTime(audio.currentTime);
+      }
+    });
+
+    progress.addEventListener('pointerdown', () => userScrubbing = true);
+    progress.addEventListener('pointerup', () => {
+      userScrubbing = false;
+      audio.currentTime = (progress.value / 100) * audio.duration;
+    });
+    progress.addEventListener('input', () => {
+      if (audio.duration) {
+        audio.currentTime = (progress.value / 100) * audio.duration;
+      }
+    });
+
+    function appendCue(cue) {
+      const idx = cues.indexOf(cue);
+      if (idx <= lastIndex) return;
+      lastIndex = idx;
+
+      const text = cue.text.trim();
+      const line = document.createElement('div');
+      line.className = 'line';
+      lyricsEl.appendChild(line);
+
+      if (window.motion) {
+        motion.animate(line, { opacity: [0, 1], y: [4, 0] }, { duration: 0.3 });
+      }
+
+      let i = 0;
+      clearInterval(typingTimer);
+      typingTimer = setInterval(() => {
+        line.textContent += text.charAt(i++);
+        if (i >= text.length) clearInterval(typingTimer);
+        lyricsEl.scrollTop = lyricsEl.scrollHeight;
+      }, 40);
+    }
+
+    function formatTime(sec) {
+      if (!isFinite(sec)) return '0:00';
+      const m = Math.floor(sec / 60);
+      const s = Math.floor(sec % 60).toString().padStart(2, '0');
+      return `${m}:${s}`;
+    }
+  </script>
+</body>
+</html>
